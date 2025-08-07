@@ -67,7 +67,7 @@ public final class ConfigUtil {
         final YamlConfiguration def = new YamlConfiguration();
 
         // === Translator Defaults ===
-        def.set("storage.backend", "yaml"); // yaml | sqlite | mysql
+        def.set("storage.backend", "sqlite"); // yaml | sqlite | mysql
 
         // SQLite defaults (db file stored under plugin data folder)
         def.set("storage.sqlite.file", "translator.db");
