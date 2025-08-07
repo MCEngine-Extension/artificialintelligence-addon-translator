@@ -99,11 +99,6 @@ public class Translator implements IMCEngineArtificialIntelligenceAddOn {
             logger.warning("Failed to initialize Translator AddOn: " + e.getMessage());
             e.printStackTrace();
         }
-
-        // Check for updates
-        MCEngineCoreApi.checkUpdate(plugin, logger.getLogger(),
-            "github", "MCEngine-Extension", "artificialintelligence-addon-translator",
-            plugin.getConfig().getString("github.token", "null"));
     }
 
     @Override
