@@ -1,0 +1,12 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  create-release:
+    uses: MCEngine-Extension/gradle/.github/workflows/create-release-extension-with-testing-jar.yml@master
+    with:
+      repo-name: ${{ github.repository }}
+    secrets:
+      USER_GITHUB_TOKEN: ${{ secrets.USER_GITHUB_TOKEN }}
