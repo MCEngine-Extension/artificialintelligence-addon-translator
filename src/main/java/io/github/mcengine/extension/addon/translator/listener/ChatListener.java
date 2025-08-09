@@ -1,5 +1,6 @@
 package io.github.mcengine.extension.addon.translator.listener;
 
+import io.github.mcengine.extension.addon.translator.Translator;
 import io.github.mcengine.extension.addon.translator.hologram.HologramManager;
 import io.github.mcengine.extension.addon.translator.player.PlayerLangStore;
 import io.github.mcengine.extension.addon.translator.translate.TranslationService;
@@ -17,6 +18,8 @@ import java.util.stream.Collectors;
 /**
  * Intercepts chat, translates once per language in-use, and renders
  * per-player hologram lines (rolling 10-line feed).
+ * <p>If the sender has Test Mode enabled, their own message will be translated
+ * to their selected language and shown to them as well.</p>
  */
 public class ChatListener implements Listener {
 
@@ -28,12 +31,19 @@ public class ChatListener implements Listener {
     private final TranslationService translations;
     /** Hologram manager used to render translated lines. */
     private final HologramManager holograms;
+    /** Per-player Test Mode flag provider. */
+    private final Translator.TestMode testMode;
 
-    public ChatListener(Plugin plugin, PlayerLangStore store, TranslationService translations, HologramManager holograms) {
+    public ChatListener(Plugin plugin,
+                        PlayerLangStore store,
+                        TranslationService translations,
+                        HologramManager holograms,
+                        Translator.TestMode testMode) {
         this.plugin = plugin;
         this.store = store;
         this.translations = translations;
         this.holograms = holograms;
+        this.testMode = testMode;
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -41,8 +51,14 @@ public class ChatListener implements Listener {
         Player sender = e.getPlayer();
         String original = e.getMessage();
 
-        Map<String, List<Player>> byLang = Bukkit.getOnlinePlayers().stream()
-                .filter(p -> !p.equals(sender))
+        final boolean testEnabled = testMode != null && testMode.isEnabled(sender.getUniqueId());
+
+        // Materialize online players into a concrete List<Player> to avoid wildcard-capture issues.
+        final List<Player> allPlayers = new ArrayList<>(Bukkit.getOnlinePlayers());
+
+        // Include sender only if Test Mode is enabled; otherwise exclude as before.
+        Map<String, List<Player>> byLang = allPlayers.stream()
+                .filter(p -> testEnabled || !p.equals(sender))
                 .collect(Collectors.groupingBy(
                         p -> Optional.ofNullable(store.get(p.getUniqueId())).orElse(""),
                         Collectors.toList()
@@ -84,7 +100,10 @@ public class ChatListener implements Listener {
                     }
                 }
 
-                holograms.addLine(sender, ChatColor.GRAY + "<You> " + original);
+                // Only add the raw "You" line when NOT in Test Mode.
+                if (!testEnabled) {
+                    holograms.addLine(sender, ChatColor.GRAY + "<You> " + original);
+                }
             });
             return null;
         });

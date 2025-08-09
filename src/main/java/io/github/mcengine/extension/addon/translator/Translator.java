@@ -28,9 +28,8 @@ import org.bukkit.plugin.PluginManager;
 
 import java.lang.reflect.Field;
 import java.sql.Connection;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Translator AddOn entrypoint.
@@ -66,6 +65,51 @@ public class Translator implements IMCEngineArtificialIntelligenceAddOn {
     /** ORM repository for player language prefs (DB backend only). */
     private LangPreferenceRepository langRepo;
 
+    /** In-memory per-player Test Mode state. */
+    private TestMode testMode;
+
+    /**
+     * Lightweight registry for per-player Test Mode.
+     */
+    public interface TestMode {
+        /**
+         * Checks whether Test Mode is enabled for a player.
+         * @param id player UUID
+         * @return true if enabled
+         */
+        boolean isEnabled(UUID id);
+
+        /**
+         * Toggles Test Mode for a player.
+         * @param id player UUID
+         * @return the new state after toggling
+         */
+        boolean toggle(UUID id);
+    }
+
+    /**
+     * Thread-safe in-memory implementation of {@link TestMode}.
+     */
+    public static final class InMemoryTestMode implements TestMode {
+        /** Set of players who have Test Mode enabled. */
+        private final Set<UUID> enabled = ConcurrentHashMap.newKeySet();
+
+        @Override
+        public boolean isEnabled(UUID id) {
+            return enabled.contains(id);
+        }
+
+        @Override
+        public boolean toggle(UUID id) {
+            if (enabled.contains(id)) {
+                enabled.remove(id);
+                return false;
+            }
+            enabled.add(id);
+            return true;
+        }
+    }
+
     @Override
     public void onLoad(Plugin plugin) {
         // Logger: (Plugin, name, shortName)
@@ -74,6 +118,8 @@ public class Translator implements IMCEngineArtificialIntelligenceAddOn {
                 "AddOn",
                 "ai-translator"
         );
+
+        HologramManager.check(logger);
 
         // Custom-path config
         this.configUtil = new ConfigUtil(plugin);
@@ -125,14 +171,17 @@ public class Translator implements IMCEngineArtificialIntelligenceAddOn {
 
         this.holograms = new HologramManager(plugin);
 
+        // Test Mode (in-memory)
+        this.testMode = new InMemoryTestMode();
+
         // Listeners
         PluginManager pm = plugin.getServer().getPluginManager();
         pm.registerEvents(new MoveListener(holograms), plugin);
         pm.registerEvents(new QuitListener(holograms), plugin);
-        pm.registerEvents(new ChatListener(plugin, playerLangStore, translationService, holograms), plugin);
+        pm.registerEvents(new ChatListener(plugin, playerLangStore, translationService, holograms, testMode), plugin);
 
-        // Command bridge
-        this.commandImpl = new TranslatorCommand(p -> playerLangStore, () -> langRegistry);
+        // Command bridge (inject Test Mode)
+        this.commandImpl = new TranslatorCommand(p -> playerLangStore, () -> langRegistry, testMode);
 
         // Register /translator via CommandMap
         try {
@@ -151,7 +200,7 @@ public class Translator implements IMCEngineArtificialIntelligenceAddOn {
                 }
             };
             translator.setDescription("Manage AI Translator language");
-            translator.setUsage("/translator set <lang> | /translator get | /translator clear");
+            translator.setUsage("/translator set <lang> | /translator get | /translator clear (OP: /translator mode test)");
             commandMap.register("translator", translator);
         } catch (Exception e) {
             logger.getLogger().severe("[Translator] Failed to register /translator command: " + e.getMessage());
@@ -168,6 +217,8 @@ public class Translator implements IMCEngineArtificialIntelligenceAddOn {
         final List<String> out = new ArrayList<>(16);
         if (args == null) return out;
 
+        final boolean isOp = (sender instanceof org.bukkit.entity.Player) && ((org.bukkit.entity.Player) sender).isOp();
+
         if (args.length == 0) return out;
 
         if (args.length == 1) {
@@ -175,20 +226,28 @@ public class Translator implements IMCEngineArtificialIntelligenceAddOn {
             if ("set".startsWith(p)) out.add("set");
             if ("get".startsWith(p)) out.add("get");
             if ("clear".startsWith(p)) out.add("clear");
+            if (isOp && "mode".startsWith(p)) out.add("mode");
             return out;
         }
 
-        if (args.length == 2 && "set".equalsIgnoreCase(args[0])) {
-            final String p = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
-            if (langRegistry == null) return out; // safety
-            int added = 0;
-            for (String c : langRegistry.codes()) {
-                if (c.startsWith(p)) {
-                    out.add(c);
-                    if (++added >= 50) break;
+        if (args.length == 2) {
+            if ("set".equalsIgnoreCase(args[0])) {
+                final String p = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
+                if (langRegistry == null) return out; // safety
+                int added = 0;
+                for (String c : langRegistry.codes()) {
+                    if (c.startsWith(p)) {
+                        out.add(c);
+                        if (++added >= 50) break;
+                    }
                 }
+                return out;
             }
-            return out;
+            if (isOp && "mode".equalsIgnoreCase(args[0])) {
+                final String p = args[1] == null ? "" : args[1].toLowerCase(Locale.ROOT);
+                if ("test".startsWith(p)) out.add("test");
+                return out;
+            }
         }
 
         return out;
