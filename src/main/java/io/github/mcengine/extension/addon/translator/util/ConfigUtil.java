@@ -10,28 +10,32 @@ import java.io.IOException;
 /**
  * Utilities for creating, loading, saving, and reloading the Translator configuration
  * at a custom location under the plugin's data folder.
- * <p>
- * Location (relative to the plugin data folder):
+ *
+ * <p>Location (relative to the plugin data folder):</p>
  * <pre>
  *   extensions/addons/configs/MCEngineTranslator/config.yml
  * </pre>
- * <p>
- * Behavior:
+ *
+ * <p><b>Behavior</b></p>
  * <ul>
  *   <li>If the directory does not exist, it will be created.</li>
  *   <li>If the {@code config.yml} does not exist, a minimal default config will be generated once.</li>
  *   <li>Existing files are never overwritten.</li>
  * </ul>
+ *
+ * <p><b>Storage note:</b> This AddOn uses the Common API's shared database connection when
+ * {@code storage.backend} is set to {@code db}. The YAML fallback stores player language
+ * preferences directly inside this file.</p>
  */
 public final class ConfigUtil {
 
-    /** The relative path where the Translator config is stored. */
+    /** Relative path where the Translator config is stored. */
     private final String folderPath = "extensions/addons/configs/MCEngineTranslator";
 
-    /** The owning Bukkit plugin instance. */
+    /** Owning Bukkit plugin instance. */
     private final Plugin plugin;
 
-    /** The resolved config file on disk: {@code <dataFolder>/<folderPath>/config.yml}. */
+    /** Resolved config file on disk: {@code <dataFolder>/<folderPath>/config.yml}. */
     private final File configFile;
 
     /** In-memory configuration handle; populated by {@link #initAndLoad()}. */
@@ -63,31 +67,47 @@ public final class ConfigUtil {
             return;
         }
 
-        // Create a minimal default configuration (example-style: write values directly)
+        // Create a minimal default configuration (write values directly)
         final YamlConfiguration def = new YamlConfiguration();
 
+        // Add explanatory header (saved to file)
+        def.options().header(
+            "MCEngine Translator AddOn Configuration\n" +
+            "\n" +
+            "Storage:\n" +
+            "  storage.backend:\n" +
+            "    - \"db\"   : Use Common API shared database for player language preferences (recommended).\n" +
+            "    - \"yaml\" : Store preferences in this config file under the 'players' section.\n" +
+            "\n" +
+            "AI Settings:\n" +
+            "  ai.platform   : Platform key registered in MCEngine (e.g., \"openai\", \"deepseek\", \"customurl\").\n" +
+            "  ai.model      : Model name/alias registered under the platform.\n" +
+            "  ai.tokenType  : \"server\" uses the server token; \"player\" uses each player's token from the Common API DB.\n" +
+            "  ai.systemPrompt: System prompt that guides translation behavior.\n" +
+            "\n" +
+            "Cache:\n" +
+            "  cache.maxEntries : Maximum number of translations kept in the in-memory cache.\n" +
+            "  cache.ttlSeconds : Time-to-live for cached translations in seconds.\n" +
+            "\n" +
+            "Notes:\n" +
+            "  - This file is created once with safe defaults and will not be overwritten on updates.\n" +
+            "  - When using \"yaml\" backend, preferences will be saved under the 'players' section.\n"
+        );
+        def.options().copyHeader(true);
+
         // === Translator Defaults ===
-        def.set("storage.backend", "sqlite"); // yaml | sqlite | mysql
-
-        // SQLite defaults (db file stored under plugin data folder)
-        def.set("storage.sqlite.file", "translator.db");
-
-        // MySQL defaults
-        def.set("storage.mysql.host", "127.0.0.1");
-        def.set("storage.mysql.port", 3306);
-        def.set("storage.mysql.database", "mcengine");
-        def.set("storage.mysql.username", "root");
-        def.set("storage.mysql.password", "password");
-        def.set("storage.mysql.params", "useSSL=false&useUnicode=true&characterEncoding=utf8&serverTimezone=UTC&allowPublicKeyRetrieval=true");
+        // Use Common API DB by default. Options: "db" | "yaml"
+        def.set("storage.backend", "db");
 
         // AI Defaults for Translator AddOn
         def.set("ai.platform", "deepseek");
         def.set("ai.model", "deepseek-chat");
         def.set("ai.tokenType", "server");
         def.set("ai.systemPrompt",
-                "You are a precise, safe translator. Detect the source language and translate the user's " +
+                "You are a precise, safe translator. Detect the user's source language and translate the " +
                 "message to the requested target language code (ISO 639-1). Output only the translated text.");
 
+        // Simple in-memory cache defaults
         def.set("cache.maxEntries", 1000);
         def.set("cache.ttlSeconds", 300);
 
