@@ -16,10 +16,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 /**
- * Intercepts chat, translates once per language in-use, and renders
- * per-player hologram lines (rolling 10-line feed).
- * <p>If the sender has Test Mode enabled, their own message will be translated
- * to their selected language and shown to them as well.</p>
+ * Translates incoming chat once per target language and shows each recipient
+ * a single ephemeral line under their own name (auto-clears after 10s and
+ * is replaced by the next message).
+ *
+ * <p>When Test Mode is enabled for the sender, they also see their own
+ * translated text under their name. Otherwise they see a raw "You" line.</p>
  */
 public class ChatListener implements Listener {
 
@@ -48,23 +50,23 @@ public class ChatListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onChat(AsyncPlayerChatEvent e) {
-        Player sender = e.getPlayer();
-        String original = e.getMessage();
+        final Player sender = e.getPlayer();
+        final String original = e.getMessage();
 
         final boolean testEnabled = testMode != null && testMode.isEnabled(sender.getUniqueId());
 
-        // Materialize online players into a concrete List<Player> to avoid wildcard-capture issues.
+        // Materialize online players into a concrete list.
         final List<Player> allPlayers = new ArrayList<>(Bukkit.getOnlinePlayers());
 
         // Include sender only if Test Mode is enabled; otherwise exclude as before.
-        Map<String, List<Player>> byLang = allPlayers.stream()
+        final Map<String, List<Player>> byLang = allPlayers.stream()
                 .filter(p -> testEnabled || !p.equals(sender))
                 .collect(Collectors.groupingBy(
                         p -> Optional.ofNullable(store.get(p.getUniqueId())).orElse(""),
                         Collectors.toList()
                 ));
 
-        Set<String> targetLangs = byLang.keySet().stream()
+        final Set<String> targetLangs = byLang.keySet().stream()
                 .filter(code -> code != null && !code.isBlank())
                 .collect(Collectors.toSet());
 
@@ -73,36 +75,55 @@ public class ChatListener implements Listener {
             return;
         }
 
+        // We'll handle delivery ourselves via holograms.
         e.setCancelled(true);
 
-        CompletableFuture<Map<String, String>> fut = translations.translateOncePerLanguage(original, targetLangs);
+        final CompletableFuture<Map<String, String>> fut =
+                translations.translateOncePerLanguage(original, targetLangs);
+
         fut.handle((result, err) -> {
             Bukkit.getScheduler().runTask(plugin, () -> {
                 if (err != null || result == null) {
+                    // Fallback: raw line under each recipient's name.
                     for (Player p : Bukkit.getOnlinePlayers()) {
-                        holograms.addLine(p, ChatColor.GRAY + "<" + sender.getName() + "> " + original);
+                        holograms.showEphemeral(
+                                p,
+                                ChatColor.GRAY + "<" + sender.getName() + "> " + ChatColor.WHITE + original
+                        );
+                    }
+                    // Sender "You" line only when not testing
+                    if (!testEnabled) {
+                        holograms.showEphemeral(
+                                sender,
+                                ChatColor.GRAY + "<You> " + ChatColor.WHITE + original
+                        );
                     }
                     return;
                 }
 
+                // Deliver per-language result to recipients who use that language
                 for (Map.Entry<String, List<Player>> entry : byLang.entrySet()) {
                     final String lang = entry.getKey();
                     final List<Player> players = entry.getValue();
 
-                    final String text = (lang == null || lang.isBlank())
-                            ? ChatColor.GRAY + "<" + sender.getName() + "> " + original
-                            : ChatColor.AQUA + "[T:" + lang + "] " + ChatColor.WHITE +
-                              ChatColor.GRAY + "<" + sender.getName() + "> " + ChatColor.WHITE +
-                              result.getOrDefault(lang, original);
+                    final String translated = (lang == null || lang.isBlank())
+                            ? original
+                            : result.getOrDefault(lang, original);
+
+                    final String line = ChatColor.AQUA + "<" + sender.getName() + "> "
+                            + ChatColor.WHITE + translated;
 
                     for (Player p : players) {
-                        holograms.addLine(p, text);
+                        holograms.showEphemeral(p, line);
                     }
                 }
 
                 // Only add the raw "You" line when NOT in Test Mode.
                 if (!testEnabled) {
-                    holograms.addLine(sender, ChatColor.GRAY + "<You> " + original);
+                    holograms.showEphemeral(
+                            sender,
+                            ChatColor.GRAY + "<You> " + ChatColor.WHITE + original
+                    );
                 }
             });
             return null;

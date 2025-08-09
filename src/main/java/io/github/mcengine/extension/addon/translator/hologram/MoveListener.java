@@ -5,14 +5,22 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.player.PlayerMoveEvent;
 
 /**
- * Repositions holograms when players move/rotate.
+ * Repositions active holograms whenever a player moves or rotates enough
+ * to visibly change the subtitle location.
  */
 public final class MoveListener implements Listener {
 
-    /** Hologram manager to adjust positions as players move. */
+    /** Manager used to adjust positions for moving players. */
     private final HologramManager holo;
 
-    public MoveListener(HologramManager holo) { this.holo = holo; }
+    /**
+     * Constructs the listener.
+     *
+     * @param holo hologram manager responsible for positioning
+     */
+    public MoveListener(HologramManager holo) {
+        this.holo = holo;
+    }
 
     @EventHandler
     public void onMove(PlayerMoveEvent e) {
