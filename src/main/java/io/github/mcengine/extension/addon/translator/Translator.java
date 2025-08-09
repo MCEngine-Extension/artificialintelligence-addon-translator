@@ -1,9 +1,10 @@
 package io.github.mcengine.extension.addon.translator;
 
+import io.github.mcengine.api.artificialintelligence.MCEngineArtificialIntelligenceApi;
+import io.github.mcengine.api.artificialintelligence.extension.addon.IMCEngineArtificialIntelligenceAddOn;
 import io.github.mcengine.api.core.MCEngineCoreApi;
 import io.github.mcengine.api.core.extension.logger.MCEngineExtensionLogger;
-import io.github.mcengine.api.artificialintelligence.extension.addon.IMCEngineArtificialIntelligenceAddOn;
-
+import io.github.mcengine.common.artificialintelligence.MCEngineArtificialIntelligenceCommon;
 import io.github.mcengine.extension.addon.translator.command.TranslatorCommand;
 import io.github.mcengine.extension.addon.translator.hologram.HologramManager;
 import io.github.mcengine.extension.addon.translator.hologram.MoveListener;
@@ -14,16 +15,9 @@ import io.github.mcengine.extension.addon.translator.player.PlayerLangStore;
 import io.github.mcengine.extension.addon.translator.player.PlayerLangStore.Backend;
 import io.github.mcengine.extension.addon.translator.player.orm.JdbcLangPreferenceRepository;
 import io.github.mcengine.extension.addon.translator.player.orm.LangPreferenceRepository;
-import io.github.mcengine.extension.addon.translator.storage.DatabaseManager;
-import io.github.mcengine.extension.addon.translator.storage.MySqlDialect;
-import io.github.mcengine.extension.addon.translator.storage.SqlDialect;
-import io.github.mcengine.extension.addon.translator.storage.SqliteDialect;
 import io.github.mcengine.extension.addon.translator.translate.TranslationCache;
 import io.github.mcengine.extension.addon.translator.translate.TranslationService;
 import io.github.mcengine.extension.addon.translator.util.ConfigUtil;
-
-import io.github.mcengine.api.artificialintelligence.MCEngineArtificialIntelligenceApi;
-
 import org.bukkit.Bukkit;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandMap;
@@ -40,7 +34,8 @@ import java.util.Locale;
 
 /**
  * Translator AddOn entrypoint.
- * Wires config, services, listeners, and the /translator command.
+ * <p>Wires config, services, listeners, and the {@code /translator} command.
+ * Storage can be YAML (local file) or the shared Database (via Common API).</p>
  */
 public class Translator implements IMCEngineArtificialIntelligenceAddOn {
 
@@ -68,9 +63,6 @@ public class Translator implements IMCEngineArtificialIntelligenceAddOn {
     /** Command bridge impl (created after onLoad initializes services). */
     private TranslatorCommand commandImpl;
 
-    /** Database manager when using DB backend; otherwise {@code null}. */
-    private DatabaseManager dbManager;
-
     /** ORM repository for player language prefs (DB backend only). */
     private LangPreferenceRepository langRepo;
 
@@ -90,27 +82,25 @@ public class Translator implements IMCEngineArtificialIntelligenceAddOn {
         // Core services
         this.langRegistry = new LangRegistry();
 
-        // Determine storage backend
+        // Determine storage backend from config; "yaml" uses file, anything else tries DB.
         String backendStr = cfg.getString("storage.backend", "yaml").toLowerCase(Locale.ROOT);
-        Backend backend = switch (backendStr) {
-            case "sqlite", "mysql" -> Backend.DB;
-            default -> Backend.YAML;
-        };
+        Backend backend = "yaml".equals(backendStr) ? Backend.YAML : Backend.DB;
 
-        // Optional DB init
+        // === Use shared DB from Common API when backend == DB ===
         if (backend == Backend.DB) {
-            SqlDialect dialect;
-            if ("mysql".equals(backendStr)) {
-                dialect = new MySqlDialect();
-            } else {
-                dialect = new SqliteDialect();
+            Connection conn = null;
+            try {
+                MCEngineArtificialIntelligenceCommon common = MCEngineArtificialIntelligenceCommon.getApi();
+                if (common != null) conn = common.getDBConnection();
+            } catch (Exception e) {
+                logger.getLogger().warning("[Translator] Could not access Common API DB: " + e.getMessage());
             }
-            this.dbManager = new DatabaseManager(plugin, cfg, backendStr, logger);
-            Connection conn = dbManager.getConnection();
+
             if (conn != null) {
-                this.langRepo = new JdbcLangPreferenceRepository(conn, dialect, plugin.getLogger());
+                // Repository now auto-detects dialect internally.
+                this.langRepo = new JdbcLangPreferenceRepository(conn, plugin.getLogger());
             } else {
-                logger.getLogger().warning("[Translator] Falling back to YAML because DB connection could not be established.");
+                logger.getLogger().warning("[Translator] Falling back to YAML because shared DB connection is unavailable.");
                 backend = Backend.YAML;
             }
         }
@@ -209,7 +199,7 @@ public class Translator implements IMCEngineArtificialIntelligenceAddOn {
         if (holograms != null) holograms.shutdown();
         if (playerLangStore != null) playerLangStore.save();
         if (configUtil != null) configUtil.save();
-        if (dbManager != null) dbManager.close();
+        // Note: Do NOT close the DB here; it's managed by the Common API.
     }
 
     @Override
